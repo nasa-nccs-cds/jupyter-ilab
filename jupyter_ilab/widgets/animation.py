@@ -205,14 +205,15 @@ class SliceAnimation:
 
     def __init__(self, data_arrays: Union[xa.DataArray,List[xa.DataArray]], **kwargs ):
         self.frames: np.ndarray = None
+        self.plot_grid = None
         self.metrics_scale =  kwargs.get( 'metrics_scale', None )
         self.data: List[xa.DataArray] = self.preprocess_inputs(data_arrays)
         self.plot_axes = None
-        self.auxplot = kwargs.get( "auxplot", None )
         self.metrics_alpha = kwargs.get( "metrics_alpha", 0.7 )
-        self.figure: Figure = None
+        self.figure: Figure = plt.figure()
+        self.plot_grid = self.figure.add_gridspec( 3, 2 )
         self.images: Dict[int,AxesImage] = {}
-        self.nPlots = len(self.data)
+        self.nPlots = min( len(self.data), 4 )
         self.metrics: Dict = kwargs.get("metrics", {})
         self.frame_marker: Line2D = None
         self.setup_plots(**kwargs)
@@ -229,12 +230,24 @@ class SliceAnimation:
 
     def preprocess_inputs(self, data_arrays: Union[xa.DataArray,List[xa.DataArray]]  ) -> List[xa.DataArray]:
         inputs_list = data_arrays if isinstance(data_arrays, list) else [data_arrays]
-        preprocessed_inputs: List[xa.DataArray] = [ self.preprocess_input(input) for input in inputs_list ]
-        axis0_lens = [ processed_input.shape[0] for processed_input in preprocessed_inputs ]
+        axis0_lens = [ input.shape[0] for input in inputs_list ]
         self.nFrames = max(axis0_lens)
-        target_input = preprocessed_inputs[ axis0_lens.index( self.nFrames ) ]
+        target_input = inputs_list[ axis0_lens.index( self.nFrames ) ]
         self.frames = target_input.coords[ target_input.dims[0] ].values
-        return preprocessed_inputs
+        return inputs_list
+
+    def check_axes( cls, inputs: List[xa.DataArray] ):
+        coord_lists = [ [], [], [] ]
+        for input in inputs:
+            for iC in range(3):
+                coord_lists[iC].append( input.coords[ input.dims[iC]] )
+        for clist in coord_lists: cls.test_coord_equivalence( clist )
+
+    def test_coord_equivalence( cls, coords: List[xa.DataArray] ):
+        c0 = coords[0]
+        for c1 in coords[1:]:
+            if (c0.shape[0] != c1.shape[0]) or ( c0.values[0] != c1.values[0] ) or ( c0.values[1] != c1.values[1] ):
+                raise Exception( "Coordinate Mismatch")
 
     @classmethod
     def time_merge( cls, data_arrays: List[xa.DataArray], **kwargs ) -> xa.DataArray:
@@ -244,28 +257,18 @@ class SliceAnimation:
         result: xa.DataArray =  xa.concat( data_arrays, dim=merge_coord )
         return result
 
-    @classmethod
-    def preprocess_input(cls, dataArray: xa.DataArray ) -> xa.DataArray:
-        if dataArray.ndim == 3: return dataArray
-        if 'time' not in dataArray.dims:
-            return cls.time_merge([dataArray])
-        else:
-            raise Exception( f"This plotter only works with 3 dimensional [t,y,x] data arrays.  Found {dataArray.dims}" )
+    def get_axes(self):
+        if self.nPlots == 1:    gsl = [ self.plot_grid[:-1, :] ]
+        elif self.nPlots == 2:  gsl = [ self.plot_grid[:-1, 0], self.plot_grid[:-1, 1]  ]
+        elif self.nPlots == 3:  gsl = [ self.plot_grid[0, 0], self.plot_grid[:-1, 1], self.plot_grid[0, 1], self.plot_grid[1, 0] ]
+        elif self.nPlots == 4:  gsl = [ self.plot_grid[0, 0], self.plot_grid[:-1, 1], self.plot_grid[0, 1], self.plot_grid[1, 0], self.plot_grid[1, 1] ]
+        else: raise Exception( f"Unsupported number of plots: {self.nPlots}" )
+        self.metrics_plot = self.figure.add_subplot( self.plot_grid[2, :] )
+        return np.array( [ self.figure.add_subplot(gs) for gs in gsl ] )
 
     def setup_plots( self, **kwargs ):
-        self.plot_grid_shape: List[int] = self.getSubplotShape( len(self.metrics)>0 )  # [ rows, cols ]
-        if self.nPlots == 1 and len( self.metrics ) > 0:
-            self.plot_axes = np.arange(2)
-            self.figure = plt.figure()
-            gs = self.figure.add_gridspec(2, 3)
-            if self.auxplot is None:
-                self.plot_axes = np.array( [ self.figure.add_subplot( gs[:, :-1] ), self.figure.add_subplot( gs[:,  -1] ) ] )
-            else:
-                self.plot_axes = np.array([self.figure.add_subplot(gs[:, :-1]), self.figure.add_subplot(gs[0, -1]), self.figure.add_subplot(gs[1, -1]) ])
-
-        else:
-            self.figure, self.plot_axes = plt.subplots( *self.plot_grid_shape )
-
+        self.plot_grid = self.figure.add_gridspec(3,2)
+        self.plot_axes = self.get_axes()
         self.figure.subplots_adjust(bottom=0.12) # 0.18)
         self.figure.suptitle( kwargs.get("title",""), fontsize=14 )
         self.slider_axes: Axes = self.figure.add_axes([0.1, 0.05, 0.8, 0.04])  # [left, bottom, width, height]
@@ -286,12 +289,6 @@ class SliceAnimation:
     def get_coord(self, iPlot: int, iCoord: int ) -> np.ndarray:
         data = self.data[iPlot]
         return data.coords[ data.dims[iCoord] ].values
-
-    def getSubplotShape(self, has_diagnostics: bool  ) -> List[int]:
-        nCells = self.nPlots+1 if has_diagnostics else self.nPlots
-        nrows = math.floor( math.sqrt( nCells ) )
-        ncols = math.ceil( nCells / nrows )
-        return [ nrows, ncols ]
 
     def getSubplot( self, iPlot: int  ) -> Axes:
         if self.plot_grid_shape == [1, 1]: return self.plot_axes
@@ -330,10 +327,6 @@ class SliceAnimation:
             else:
                 self.frame_marker.set_data( x, y )
 
-    def update_aux_plot( self, iFrame: int ):
-        if (self.auxplot is not None) and (self.auxplot.shape[0] == self.nFrames):
-            self.images[self.nPlots].set_data( self.auxplot[iFrame] )
-
     def create_image(self, iPlot: int, **kwargs ) -> AxesImage:
         data: xa.DataArray = self.data[iPlot]
         subplot: Axes = self.getSubplot( iPlot )
@@ -364,17 +357,6 @@ class SliceAnimation:
                 line, = axis.plot(x, y, color=color)
             axis.legend()
 
-    def create_aux_plot(self):
-        if self.auxplot is not None:
-            axis = self.plot_axes[2]
-            axis.title.set_text("AuxPlot")
-            cm = self.create_cmap( self.auxplot.attrs.get("cmap", {}) )
-            color_tick_labels = cm.pop('tick_labels', None)
-            z: xa.DataArray = self.auxplot[0]
-            self.images[self.nPlots]  = z.plot.imshow( ax=axis, **cm )
-            if color_tick_labels is not None: self.images[self.nPlots].colorbar.ax.set_yticklabels(color_tick_labels)
-            axis.legend()
-
     def update_plots(self, iFrame: int ):
         tval = self.frames[ iFrame ]
         for iPlot in range(self.nPlots):
@@ -387,9 +369,8 @@ class SliceAnimation:
             stval = str(tval1).split("T")[0]
             subplot.title.set_text( f"F-{iFrame} [{stval}]" )
         self.update_metrics( iFrame )
-        self.update_aux_plot(iFrame)
 
-    def onMetricsClick(self, event):
+    def onMouseClick(self, event):
         if event.xdata != None and event.ydata != None:
             if len(self.metrics):
                 axis: Axes = self.plot_axes[1]
@@ -401,8 +382,7 @@ class SliceAnimation:
         for iPlot in range(self.nPlots):
             self.images[iPlot] = self.create_image( iPlot, **kwargs )
         self.create_metrics_plot()
-        self.create_aux_plot()
-        self._cid = self.figure.canvas.mpl_connect( 'button_press_event', self.onMetricsClick)
+        self._cid = self.figure.canvas.mpl_connect( 'button_press_event', self.onMouseClick)
 
     def add_slider(self,  **kwargs ):
         self.slider = PageSlider( self.slider_axes, self.nFrames )
