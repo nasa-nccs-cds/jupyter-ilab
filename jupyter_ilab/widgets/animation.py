@@ -257,28 +257,21 @@ class SliceAnimation:
         result: xa.DataArray =  xa.concat( data_arrays, dim=merge_coord )
         return result
 
-    def get_axes(self):
+    def setup_plots( self, **kwargs ):
+        self.plot_grid = self.figure.add_gridspec(3,2)
         if self.nPlots == 1:    gsl = [ self.plot_grid[:-1, :] ]
         elif self.nPlots == 2:  gsl = [ self.plot_grid[:-1, 0], self.plot_grid[:-1, 1]  ]
         elif self.nPlots == 3:  gsl = [ self.plot_grid[0, 0], self.plot_grid[:-1, 1], self.plot_grid[0, 1], self.plot_grid[1, 0] ]
         elif self.nPlots == 4:  gsl = [ self.plot_grid[0, 0], self.plot_grid[:-1, 1], self.plot_grid[0, 1], self.plot_grid[1, 0], self.plot_grid[1, 1] ]
         else: raise Exception( f"Unsupported number of plots: {self.nPlots}" )
         self.metrics_plot = self.figure.add_subplot( self.plot_grid[2, :] )
-        return np.array( [ self.figure.add_subplot(gs) for gs in gsl ] )
-
-    def setup_plots( self, **kwargs ):
-        self.plot_grid = self.figure.add_gridspec(3,2)
-        self.plot_axes = self.get_axes()
+        self.plot_axes = np.array( [ self.figure.add_subplot(gs) for gs in gsl ] )
         self.figure.subplots_adjust(bottom=0.12) # 0.18)
         self.figure.suptitle( kwargs.get("title",""), fontsize=14 )
         self.slider_axes: Axes = self.figure.add_axes([0.1, 0.05, 0.8, 0.04])  # [left, bottom, width, height]
 
     def invert_yaxis(self):
-        from matplotlib.artist import Artist
-        if isinstance( self.plot_axes, Artist ):
-            self.plot_axes.invert_yaxis()
-        else:
-            self.plot_axes[0].invert_yaxis()
+        self.plot_axes[0].invert_yaxis()
 
     def get_xy_coords(self, iPlot: int ) -> Tuple[ np.ndarray, np.ndarray ]:
         return self.get_coord( iPlot, self.x_axis ), self.get_coord( iPlot, self.y_axis )
@@ -289,12 +282,6 @@ class SliceAnimation:
     def get_coord(self, iPlot: int, iCoord: int ) -> np.ndarray:
         data = self.data[iPlot]
         return data.coords[ data.dims[iCoord] ].values
-
-    def getSubplot( self, iPlot: int  ) -> Axes:
-        if self.plot_grid_shape == [1, 1]: return self.plot_axes
-        if len(self.plot_axes.shape) == 1: return self.plot_axes[iPlot]
-        plot_coords = [ iPlot//self.plot_grid_shape[1], iPlot % self.plot_grid_shape[1]  ]
-        return self.plot_axes[ plot_coords[0], plot_coords[1] ]
 
     def create_cmap( self, cmap_spec: Union[str,Dict] ):
         if isinstance(cmap_spec,str):
@@ -319,7 +306,7 @@ class SliceAnimation:
 
     def update_metrics( self, iFrame: int ):
         if len( self.metrics ):
-            axis: Axes = self.plot_axes[1]
+            axis: Axes = self.metrics_plot
             x = [iFrame, iFrame]
             y = [ axis.dataLim.y0, axis.dataLim.y1 ]
             if self.frame_marker == None:
@@ -329,7 +316,7 @@ class SliceAnimation:
 
     def create_image(self, iPlot: int, **kwargs ) -> AxesImage:
         data: xa.DataArray = self.data[iPlot]
-        subplot: Axes = self.getSubplot( iPlot )
+        subplot: Axes = self.plot_axes[iPlot]
         cm = self.create_cmap( data.attrs.get("cmap",{}) )
         z: xa.DataArray =  data[ 0, :, : ]   # .transpose()
         color_tick_labels = cm.pop( 'tick_labels', None )
@@ -341,13 +328,19 @@ class SliceAnimation:
             overlay.plot( ax=subplot, color=color, linewidth=2 )
         return image
 
+    def compute_analytics( self, op: str, iPlot: int, iFrame: int ):
+        data: xa.DataArray = self.data[iPlot]
+        frame_image: xa.DataArray = data.isel(**{data.dims[0]: iFrame})
+        return frame_image.mean( dim=frame_image.dims[1:] )
+
     def create_metrics_plot(self):
         if len( self.metrics ):
-            axis = self.plot_axes[1]
+            axis = self.metrics_plot
             axis.title.set_text("Metrics")
             if self.metrics_scale is not None: axis.set_yscale( self.metrics_scale )
             markers = self.metrics.pop('markers',{})
-            for color, values in self.metrics.items():
+            for color, op in self.metrics.items():
+                values = self.compute_analytics( op, 0, 0 )
                 x = range( len(values) )
                 line, = axis.plot( x, values, color=color, alpha=self.metrics_alpha )
                 line.set_label(values.name)
@@ -360,9 +353,10 @@ class SliceAnimation:
     def update_plots(self, iFrame: int ):
         tval = self.frames[ iFrame ]
         for iPlot in range(self.nPlots):
-            subplot: Axes = self.getSubplot(iPlot)
+            subplot: Axes = self.plot_axes[iPlot]
             data = self.data[iPlot]
-            frame_image = data.sel( **{ data.dims[0]: tval }, method='nearest' )
+#            frame_image = data.sel( **{ data.dims[0]: tval }, method='nearest' )
+            frame_image = data.isel( **{ data.dims[0]: iFrame } )
             try:                tval1 = frame_image.time.values
             except Exception:   tval1 = tval
             self.images[iPlot].set_data( frame_image )
@@ -373,7 +367,7 @@ class SliceAnimation:
     def onMouseClick(self, event):
         if event.xdata != None and event.ydata != None:
             if len(self.metrics):
-                axis: Axes = self.plot_axes[1]
+                axis: Axes = self.metrics_plot
                 if event.inaxes == axis:
                     print( f"onMetricsClick: {event.xdata}" )
                     self.slider.set_val( round(event.xdata) )
@@ -401,5 +395,5 @@ if __name__ == '__main__':
 
     data_array: xa.DataArray = CIP.data_array( "merra2", "tas" )
     point_analytics = dict( blue="max", green="min", red="mean", black="std" )
-    animator = SliceAnimation( data_array, ptstats=point_analytics )
+    animator = SliceAnimation( data_array, ptstats=point_analytics, metrics=dict( blue="mean" ) )
     animator.show()
