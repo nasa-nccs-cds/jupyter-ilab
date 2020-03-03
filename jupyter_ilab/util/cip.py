@@ -11,6 +11,12 @@ CIP_addresses = {
     "jra": CreateIPServer + "/reanalysis/JMA/JRA-55/mon/atmos/{}.ncml",
 }
 
+Local_paths = {
+    "merra2-daily": "/Users/tpmaxwel/Dropbox/Tom/Data/MERRA/DAILY/2005/JAN/*.nc",
+    "merra2-2d_asm": "/Users/tpmaxwel/Dropbox/Tom/Data/MERRA/MERRA2/inst1_2d_asm_Nx.2018-7/*.nc*"
+
+}
+
 class CIP:
 
     @classmethod
@@ -22,3 +28,9 @@ class CIP:
         data_address = cls.address( model, varName )
         dataset = xa.open_dataset(data_address)
         return dataset[ varName ]
+
+    @classmethod
+    def local_data_array(cls,  model: str, varName: str) -> xa.DataArray:
+        data_address = Local_paths[model.lower()]
+        dataset = xa.open_mfdataset(data_address)
+        return dataset[varName]

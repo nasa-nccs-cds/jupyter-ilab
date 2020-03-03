@@ -5,6 +5,7 @@ from matplotlib.lines import Line2D
 from matplotlib.axes import Axes
 from matplotlib.colors import LinearSegmentedColormap, Normalize, ListedColormap
 import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
 from threading import  Thread
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
@@ -210,11 +211,12 @@ class SliceAnimation:
         self.data: List[xa.DataArray] = self.preprocess_inputs(data_arrays)
         self.plot_axes = None
         self.metrics_alpha = kwargs.get( "metrics_alpha", 0.7 )
+        self.metrics_plots = {}
         self.figure: Figure = plt.figure()
         self.plot_grid = self.figure.add_gridspec( 3, 2 )
         self.images: Dict[int,AxesImage] = {}
         self.nPlots = min( len(self.data), 4 )
-        self.metrics: Dict = kwargs.get("metrics", {})
+        self.metrics: Dict = dict( blue="ts" ) # kwargs.get("metrics", {})
         self.frame_marker: Line2D = None
         self.setup_plots(**kwargs)
         self.z_axis = kwargs.pop('z', 0)
@@ -223,6 +225,8 @@ class SliceAnimation:
         self.x_axis_name = self.data[0].dims[ self.x_axis ]
         self.y_axis = kwargs.pop( 'y', 1 )
         self.y_axis_name = self.data[0].dims[ self.y_axis ]
+        self.currentFrame = 0
+        self.currentPlot = 0
 
         self.add_plots( **kwargs )
         self.add_slider( **kwargs )
@@ -266,6 +270,7 @@ class SliceAnimation:
         else: raise Exception( f"Unsupported number of plots: {self.nPlots}" )
         self.metrics_plot = self.figure.add_subplot( self.plot_grid[2, :] )
         self.plot_axes = np.array( [ self.figure.add_subplot(gs) for gs in gsl ] )
+#        for axis in self.plot_axes: axis.margins(0.3)
         self.figure.subplots_adjust(bottom=0.12) # 0.18)
         self.figure.suptitle( kwargs.get("title",""), fontsize=14 )
         self.slider_axes: Axes = self.figure.add_axes([0.1, 0.05, 0.8, 0.04])  # [left, bottom, width, height]
@@ -291,7 +296,7 @@ class SliceAnimation:
         if colors is None:
             cmap = cmap_spec.pop("cmap","jet")
             norm = Normalize(*range) if range else None
-            return dict( cmap=cmap, norm=norm, cbar_kwargs=dict(cmap=cmap, norm=norm, orientation='horizontal'), tick_labels=None )
+            return dict( cmap=cmap, norm=norm, cbar_kwargs=dict(cmap=cmap, norm=norm, orientation='vertical'), tick_labels=None )
         else:
             if isinstance( colors, np.ndarray ):
                 return dict( cmap=LinearSegmentedColormap.from_list('my_colormap', colors) )
@@ -301,18 +306,17 @@ class SliceAnimation:
             color_values = [ float(cval[0]) for cval in colors]
             color_bounds = get_color_bounds(color_values)
             norm = mpl.colors.BoundaryNorm( color_bounds, len( colors )  )
-            cbar_args = dict( cmap=cmap, norm=norm, boundaries=color_bounds, ticks=color_values, spacing='proportional',  orientation='horizontal')
+            cbar_args = dict( cmap=cmap, norm=norm, boundaries=color_bounds, ticks=color_values, spacing='proportional',  orientation='vertical')
             return dict( cmap=cmap, norm=norm, cbar_kwargs=cbar_args, tick_labels=tick_labels )
 
     def update_metrics( self, iFrame: int ):
-        if len( self.metrics ):
-            axis: Axes = self.metrics_plot
-            x = [iFrame, iFrame]
-            y = [ axis.dataLim.y0, axis.dataLim.y1 ]
-            if self.frame_marker == None:
-                self.frame_marker, = axis.plot( x, y, color="yellow", lw=3, alpha=0.5 )
-            else:
-                self.frame_marker.set_data( x, y )
+        axis: Axes = self.metrics_plot
+        x = [iFrame, iFrame]
+        y = [ axis.dataLim.y0, axis.dataLim.y1 ]
+        if self.frame_marker == None:
+            self.frame_marker, = axis.plot( x, y, color="green", lw=3, alpha=0.5 )
+        else:
+            self.frame_marker.set_data( x, y )
 
     def create_image(self, iPlot: int, **kwargs ) -> AxesImage:
         data: xa.DataArray = self.data[iPlot]
@@ -328,49 +332,75 @@ class SliceAnimation:
             overlay.plot( ax=subplot, color=color, linewidth=2 )
         return image
 
-    def compute_analytics( self, op: str, iPlot: int, iFrame: int ):
-        data: xa.DataArray = self.data[iPlot]
-        frame_image: xa.DataArray = data.isel(**{data.dims[0]: iFrame})
-        return frame_image.mean( dim=frame_image.dims[1:] )
+    def compute_analytics( self, op: str, x: np.array =None, y: np.array =None ) -> Tuple[ xa.DataArray, List ]:
+        data: xa.DataArray = self.data[self.currentPlot]
+        tcoord, ycoord, xcoord = data_array.coords[data_array.dims[0]], data_array.coords[data_array.dims[1]], data_array.coords[data_array.dims[2]]
+        if x is None: x = xcoord[xcoord.size//2].values
+        if y is None: y = ycoord[ycoord.size//2].values
+        selected_point_args = { data.dims[1]: y, data.dims[2]: x}
+        print( f"METRICS: {selected_point_args}")
+        tsdata =  data.sel( **selected_point_args, method='nearest' )
+        tvar = np.array(list(range(tcoord.size))).reshape([tcoord.size, 1])
+        regressor = LinearRegression()
+        T = regressor.fit( tvar, tsdata.values )
+        trend = [T.intercept_, T.intercept_ + T.coef_[0] * tcoord.size]
+        return tsdata, trend
 
-    def create_metrics_plot(self):
-        if len( self.metrics ):
-            axis = self.metrics_plot
-            axis.title.set_text("Metrics")
-            if self.metrics_scale is not None: axis.set_yscale( self.metrics_scale )
-            markers = self.metrics.pop('markers',{})
-            for color, op in self.metrics.items():
-                values = self.compute_analytics( op, 0, 0 )
-                x = range( len(values) )
+    def update_metrics_plot( self, x: np.array =None, y: np.array =None ):
+        axis = self.metrics_plot
+        for color, op in self.metrics.items():
+            values, trend = self.compute_analytics( op, x, y )
+            x = range( len(values) )
+            mplot = self.metrics_plots.get( color, None )
+            if mplot is None:
                 line, = axis.plot( x, values, color=color, alpha=self.metrics_alpha )
                 line.set_label(values.name)
-            for color, value in markers.items():
-                x = [value, value]
-                y = [axis.dataLim.y0, axis.dataLim.y1]
-                line, = axis.plot(x, y, color=color)
-            axis.legend()
+                self.metrics_plots[ color ] = line
+                self.trend_line, = axis.plot( [x[0],x[-1]], trend, color="red" )
+            else:
+                mplot.set_data( x, values )
+                self.trend_line.set_data( [x[0],x[-1]], trend )
+                axis.relim()
+#                axis.autoscale( enable=True, axis='y', tight=True)
+                axis.autoscale_view( tight=True, scalex=False, scaley=True )
+                plt.draw()
 
-    def update_plots(self, iFrame: int ):
-        tval = self.frames[ iFrame ]
+    def create_metrics_plot(self):
+        axis = self.metrics_plot
+        axis.title.set_text("Metrics")
+        if self.metrics_scale is not None: axis.set_yscale( self.metrics_scale )
+        markers = self.metrics.pop('markers',{})
+        self.update_metrics_plot()
+        for color, value in markers.items():
+            x = [value, value]
+            y = [axis.dataLim.y0, axis.dataLim.y1]
+            line, = axis.plot(x, y, color=color)
+        axis.legend()
+
+    def update_plots(self ):
+        tval = self.frames[ self.currentFrame ]
         for iPlot in range(self.nPlots):
             subplot: Axes = self.plot_axes[iPlot]
             data = self.data[iPlot]
-#            frame_image = data.sel( **{ data.dims[0]: tval }, method='nearest' )
-            frame_image = data.isel( **{ data.dims[0]: iFrame } )
+            frame_image = data.isel( **{ data.dims[0]: self.currentFrame } )
             try:                tval1 = frame_image.time.values
             except Exception:   tval1 = tval
             self.images[iPlot].set_data( frame_image )
             stval = str(tval1).split("T")[0]
-            subplot.title.set_text( f"F-{iFrame} [{stval}]" )
-        self.update_metrics( iFrame )
+            subplot.title.set_text( f"F-{self.currentFrame} [{stval}]" )
+        self.update_metrics( self.currentFrame )
 
     def onMouseClick(self, event):
         if event.xdata != None and event.ydata != None:
-            if len(self.metrics):
-                axis: Axes = self.metrics_plot
-                if event.inaxes == axis:
-                    print( f"onMetricsClick: {event.xdata}" )
-                    self.slider.set_val( round(event.xdata) )
+            axis: Axes = self.metrics_plot
+            if event.inaxes == axis:
+                print( f"onMetricsClick: {event.xdata}" )
+                self.slider.set_val( round(event.xdata) )
+            for iPlot in range( len(self.plot_axes) ):
+                if event.inaxes ==  self.plot_axes[iPlot]:
+                    self.currentPlot = iPlot
+                    print(f"onImageClick: {event.xdata} {event.ydata}")
+                    self.update_metrics_plot( np.array(event.xdata), np.array(event.ydata) )
 
     def add_plots(self, **kwargs ):
         for iPlot in range(self.nPlots):
@@ -383,17 +413,34 @@ class SliceAnimation:
         self.slider_cid = self.slider.on_changed(self._update)
 
     def _update( self, val ):
-        i = int( self.slider.val )
-        self.update_plots(i)
+        self.currentFrame = int( self.slider.val )
+        self.update_plots()
 
     def show(self):
         self.slider.start()
         plt.show()
 
+    def start(self):
+        self.slider.start()
+
 if __name__ == '__main__':
     from jupyter_ilab.util.cip import CIP
+    use_opendap = True
 
     data_array: xa.DataArray = CIP.data_array( "merra2", "tas" )
-    point_analytics = dict( blue="max", green="min", red="mean", black="std" )
-    animator = SliceAnimation( data_array, ptstats=point_analytics, metrics=dict( blue="mean" ) )
+
+    # tcoord, ycoord, xcoord = data_array.coords[data_array.dims[0]], data_array.coords[data_array.dims[1]], data_array.coords[data_array.dims[2]]
+    # selected_point_args = {data_array.dims[1]: 0, data_array.dims[2]: 0}
+    # tsdata = data_array.sel(**selected_point_args, method='nearest').values
+    # tvar = np.array( list( range( tcoord.size ) ) ).reshape([tcoord.size, 1])
+    # regressor = LinearRegression()
+    # T = regressor.fit( tvar, tsdata )
+    # xpoints = [ tcoord[0], tcoord[-1] ]
+    # ypoints = [ T.intercept_, T.intercept_ + T.coef_[0] * tcoord.size ]
+    # print( "1" )
+
+    animator = SliceAnimation( data_array )
     animator.show()
+
+
+    # if use_opendap else CIP.local_data_array( "merra2-2d_asm", "T2M" )
