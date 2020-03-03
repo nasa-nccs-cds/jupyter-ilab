@@ -336,13 +336,13 @@ class SliceAnimation:
         return image
 
     def compute_analytics( self, op: str, x: np.array =None, y: np.array =None ) -> Tuple[ xa.DataArray, xa.DataArray, List ]:
-        data: xa.DataArray = self.data[self.currentPlot]
+        data_array: xa.DataArray = self.data[self.currentPlot]
         tcoord, ycoord, xcoord = data_array.coords[data_array.dims[0]], data_array.coords[data_array.dims[1]], data_array.coords[data_array.dims[2]]
         if x is None: x = xcoord[xcoord.size//2].values
         if y is None: y = ycoord[ycoord.size//2].values
-        selected_point_args = { data.dims[1]: y, data.dims[2]: x}
+        selected_point_args = { data_array.dims[1]: y, data_array.dims[2]: x}
         print( f"METRICS: {selected_point_args}")
-        tsdata =  data.sel( **selected_point_args, method='nearest' )
+        tsdata =  data_array.sel( **selected_point_args, method='nearest' )
         tvar = np.array(list(range(tcoord.size))).reshape([tcoord.size, 1])
         regressor = LinearRegression()
         T = regressor.fit( tvar, tsdata.values )
