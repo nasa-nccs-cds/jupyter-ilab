@@ -5,6 +5,7 @@ from matplotlib.lines import Line2D
 from matplotlib.axes import Axes
 from matplotlib.colors import LinearSegmentedColormap, Normalize, ListedColormap
 import matplotlib.pyplot as plt
+from matplotlib.dates import num2date
 from sklearn.linear_model import LinearRegression
 from threading import  Thread
 from matplotlib.figure import Figure
@@ -310,8 +311,10 @@ class SliceAnimation:
             return dict( cmap=cmap, norm=norm, cbar_kwargs=cbar_args, tick_labels=tick_labels )
 
     def update_metrics( self, iFrame: int ):
+        data_array: xa.DataArray = self.data[self.currentPlot]
+        tcoord = data_array.coords[data_array.dims[0]].values[iFrame]
         axis: Axes = self.metrics_plot
-        x = [iFrame, iFrame]
+        x = [ tcoord, tcoord ]
         y = [ axis.dataLim.y0, axis.dataLim.y1 ]
         if self.frame_marker == None:
             self.frame_marker, = axis.plot( x, y, color="green", lw=3, alpha=0.5 )
@@ -332,7 +335,7 @@ class SliceAnimation:
             overlay.plot( ax=subplot, color=color, linewidth=2 )
         return image
 
-    def compute_analytics( self, op: str, x: np.array =None, y: np.array =None ) -> Tuple[ xa.DataArray, List ]:
+    def compute_analytics( self, op: str, x: np.array =None, y: np.array =None ) -> Tuple[ xa.DataArray, xa.DataArray, List ]:
         data: xa.DataArray = self.data[self.currentPlot]
         tcoord, ycoord, xcoord = data_array.coords[data_array.dims[0]], data_array.coords[data_array.dims[1]], data_array.coords[data_array.dims[2]]
         if x is None: x = xcoord[xcoord.size//2].values
@@ -344,22 +347,22 @@ class SliceAnimation:
         regressor = LinearRegression()
         T = regressor.fit( tvar, tsdata.values )
         trend = [T.intercept_, T.intercept_ + T.coef_[0] * tcoord.size]
-        return tsdata, trend
+        return tsdata, tcoord, trend
 
-    def update_metrics_plot( self, x: np.array =None, y: np.array =None ):
+    def update_metrics_plot( self, xp: np.array =None, yp: np.array =None ):
         axis = self.metrics_plot
         for color, op in self.metrics.items():
-            values, trend = self.compute_analytics( op, x, y )
-            x = range( len(values) )
+            values, tcoord, trend = self.compute_analytics( op, xp, yp )
+            t = tcoord.values
             mplot = self.metrics_plots.get( color, None )
             if mplot is None:
-                line, = axis.plot( x, values, color=color, alpha=self.metrics_alpha )
+                line, = axis.plot( t, values, color=color, alpha=self.metrics_alpha )
                 line.set_label(values.name)
                 self.metrics_plots[ color ] = line
-                self.trend_line, = axis.plot( [x[0],x[-1]], trend, color="red" )
+                self.trend_line, = axis.plot( [t[0],t[-1]], trend, color="red" )
             else:
-                mplot.set_data( x, values )
-                self.trend_line.set_data( [x[0],x[-1]], trend )
+                mplot.set_data( t, values )
+                self.trend_line.set_data( [t[0],t[-1]], trend )
                 axis.relim()
 #                axis.autoscale( enable=True, axis='y', tight=True)
                 axis.autoscale_view( tight=True, scalex=False, scaley=True )
@@ -394,8 +397,12 @@ class SliceAnimation:
         if event.xdata != None and event.ydata != None:
             axis: Axes = self.metrics_plot
             if event.inaxes == axis:
-                print( f"onMetricsClick: {event.xdata}" )
-                self.slider.set_val( round(event.xdata) )
+                data_array: xa.DataArray = self.data[self.currentPlot]
+                taxis = data_array.coords[data_array.dims[0]].values
+                dtime = np.datetime64( num2date( event.xdata ) )
+                idx = np.searchsorted( taxis, dtime, side="left")
+                print( f"onMetricsClick: {event.xdata} -> {dtime} -> {idx}" )
+                self.slider.set_val( idx )
             for iPlot in range( len(self.plot_axes) ):
                 if event.inaxes ==  self.plot_axes[iPlot]:
                     self.currentPlot = iPlot
@@ -413,7 +420,8 @@ class SliceAnimation:
         self.slider_cid = self.slider.on_changed(self._update)
 
     def _update( self, val ):
-        self.currentFrame = int( self.slider.val )
+        tval = self.slider.val
+        self.currentFrame = int( tval )
         self.update_plots()
 
     def show(self):
