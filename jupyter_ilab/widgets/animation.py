@@ -214,6 +214,7 @@ class SliceAnimation:
         self.global_mean = None
         self.global_bounds: Bbox = None
         self.global_crange = None
+        self.metrics_range = None
         self.name = self.get_name( self.data[0] )
         self.plot_axes = None
         self.metrics_alpha = kwargs.get( "metrics_alpha", 0.7 )
@@ -314,12 +315,12 @@ class SliceAnimation:
             cbar_args = dict( cmap=cmap, norm=norm, boundaries=color_bounds, ticks=color_values, spacing='proportional',  orientation='vertical')
             return dict( cmap=cmap, norm=norm, cbar_kwargs=cbar_args, tick_labels=tick_labels )
 
-    def update_metrics_marker(self, iFrame: int):
+    def update_metrics_marker(self):
         data_array: xa.DataArray = self.data[self.currentPlot]
-        tcoord = data_array.coords[data_array.dims[0]].values[iFrame]
+        tcoord = data_array.coords[data_array.dims[0]].values[self.currentFrame]
         axis: Axes = self.metrics_plot
         x = [ tcoord, tcoord ]
-        y = [ axis.dataLim.y0, axis.dataLim.y1 ]
+        y = [ axis.dataLim.y0, axis.dataLim.y1 ] if self.metrics_range is None else self.metrics_range
         if self.frame_marker == None:
             self.frame_marker, = axis.plot( x, y, color="green", lw=3, alpha=0.5 )
         else:
@@ -349,7 +350,9 @@ class SliceAnimation:
                  (y0, y1) = ax.get_ylim()
                  print(f"ZOOM Event: Updated bounds: ({x0},{x1}), ({y0},{y1})")
                  crange = self.update_metrics_plot( Bbox.from_bounds( x0, y0, x1-x0, y1-y0 ) )
-                 if crange: self.images[iPlot].set_clim( crange )
+                 if crange:
+                    self.images[iPlot].set_clim( crange )
+                    self.update_metrics_marker()
 
     def get_name(self, var: xa.DataArray) -> str:
         vname = var.attrs.get( "long_name", var.attrs.get( "standard_name", var.name) )
@@ -405,8 +408,9 @@ class SliceAnimation:
         else:
             mplot.set_data( t, values )
             self.trend_line.set_data( [t[0],t[-1]], trend )
-            axis.set_ylim( values.min(), values.max() )
-            axis.set_yticks( np.linspace( values.min(), values.max(), 7 ) )
+            self.metrics_range = [ values.min(), values.max() ]
+            axis.set_ylim( *self.metrics_range )
+            axis.set_yticks( np.linspace( *self.metrics_range, 7 ) )
             plt.draw()
         return crange
 
@@ -434,7 +438,7 @@ class SliceAnimation:
             self.images[iPlot].set_data( frame_image )
             stval = str(tval1).split("T")[0]
             subplot.title.set_text( f"{self.name} [{self.currentFrame}]: {stval}" )
-        self.update_metrics_marker(self.currentFrame)
+        self.update_metrics_marker()
 
     def onMouseRelease(self, event):
         pass
