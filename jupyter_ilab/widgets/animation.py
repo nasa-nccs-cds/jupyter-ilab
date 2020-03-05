@@ -211,6 +211,10 @@ class SliceAnimation:
         self.plot_grid = None
         self.metrics_scale =  kwargs.get( 'metrics_scale', None )
         self.data: List[xa.DataArray] = self.preprocess_inputs(data_arrays)
+        self.global_mean = None
+        self.global_bounds: Bbox = None
+        self.global_crange = None
+        self.name = self.get_name( self.data[0] )
         self.plot_axes = None
         self.metrics_alpha = kwargs.get( "metrics_alpha", 0.7 )
         self.metrics_plots = {}
@@ -273,10 +277,8 @@ class SliceAnimation:
         else: raise Exception( f"Unsupported number of plots: {self.nPlots}" )
         self.metrics_plot = self.figure.add_subplot( self.plot_grid[2, :] )
         self.plot_axes = np.array( [ self.figure.add_subplot(gs) for gs in gsl ] )
-#        for axis in self.plot_axes: axis.margins(0.3)
-        self.figure.subplots_adjust(bottom=0.12) # 0.18)
-        self.figure.suptitle( kwargs.get("title",""), fontsize=14 )
-        self.slider_axes: Axes = self.figure.add_axes([0.1, 0.05, 0.8, 0.04])  # [left, bottom, width, height]
+        self.figure.tight_layout()
+        self.slider_axes: Axes = self.figure.add_axes([0.1, 0.01, 0.8, 0.04])  # [left, bottom, width, height]
 
     def invert_yaxis(self):
         self.plot_axes[0].invert_yaxis()
@@ -312,7 +314,7 @@ class SliceAnimation:
             cbar_args = dict( cmap=cmap, norm=norm, boundaries=color_bounds, ticks=color_values, spacing='proportional',  orientation='vertical')
             return dict( cmap=cmap, norm=norm, cbar_kwargs=cbar_args, tick_labels=tick_labels )
 
-    def update_metrics( self, iFrame: int ):
+    def update_metrics_marker(self, iFrame: int):
         data_array: xa.DataArray = self.data[self.currentPlot]
         tcoord = data_array.coords[data_array.dims[0]].values[iFrame]
         axis: Axes = self.metrics_plot
@@ -347,37 +349,52 @@ class SliceAnimation:
                  (y0, y1) = ax.get_ylim()
                  print(f"ZOOM Event: Updated bounds: ({x0},{x1}), ({y0},{y1})")
                  crange = self.update_metrics_plot( Bbox.from_bounds( x0, y0, x1-x0, y1-y0 ) )
-                 self.images[iPlot].set_clim( crange )
+                 if crange: self.images[iPlot].set_clim( crange )
 
-    def compute_analytics( self, bounds: Bbox = None ) -> Tuple[ xa.DataArray, xa.DataArray, List, Optional[List] ]:
+    def get_name(self, var: xa.DataArray) -> str:
+        vname = var.attrs.get( "long_name", var.attrs.get( "standard_name", var.name) )
+        units = var.attrs.get( "units", None )
+        return f"{vname} ({units})" if units else vname
+
+    def compute_analytics( self, bounds: Bbox = None ) -> Tuple[ xa.DataArray, xa.DataArray, List, str, Optional[List] ]:
         data_array: xa.DataArray = self.data[self.currentPlot]
+        axes = self.plot_axes[self.currentPlot]
         tcoord, ycoord, xcoord = data_array.coords[data_array.dims[0]], data_array.coords[data_array.dims[1]], data_array.coords[data_array.dims[2]]
-        x0 = xcoord[xcoord.size//2].values if bounds is None else bounds.x0
-        y0 = ycoord[ycoord.size//2].values if bounds is None else bounds.y0
         crange = None
 
-        if bounds is None or bounds.width == 0 or bounds.height == 0:
-            selected_point_args = { data_array.dims[1]: y0, data_array.dims[2]: x0 }
+        if bounds is None or np.allclose( self.global_bounds.extents, bounds.extents, 0.0, 0.01 ):
+            if self.global_mean   is None: self.global_mean   = data_array.mean( dim=data_array.dims[1:] )
+            if self.global_bounds is None: self.global_bounds = axes.dataLim
+            if self.global_crange is None:
+                image0 = data_array[0,:,:]
+                self.global_crange = [ image0.min(), image0.max()]
+            tsdata = self.global_mean
+            crange = self.global_crange
+            title = f" Global Spatial Average"
+        elif bounds.width == 0 or bounds.height == 0:
+            selected_point_args = { data_array.dims[1]: bounds.y0, data_array.dims[2]: bounds.x0 }
             print( f"METRICS: {selected_point_args}")
             tsdata =  data_array.sel( **selected_point_args, method='nearest' )
-
+            title = f"Values at Location ({bounds.x0:.2f} {bounds.y0:.2f})"
         else:
-            bounds = { data_array.dims[2]: slice(x0,bounds.x1), data_array.dims[1]: slice(y0,bounds.y1) }
-            subset = data_array.sel( **bounds )
+            sbounds = { data_array.dims[2]: slice(bounds.x0,bounds.x1), data_array.dims[1]: slice(bounds.y0,bounds.y1) }
+            subset = data_array.sel( **sbounds )
             tsdata = subset.mean( dim=data_array.dims[1:] )
             visible_subset = subset[self.currentFrame,:,:]
             crange = [ visible_subset.min(), visible_subset.max() ]
+            title = f"Spatial Average over Domain ({bounds.x0:.2f},{bounds.x1:.2f}), ({bounds.y0:.2f},{bounds.y1:.2f})"
 
         regressor = LinearRegression()
         tvar = np.array(list(range(tcoord.size))).reshape([tcoord.size, 1])
         T = regressor.fit( tvar, tsdata.values )
         trend = [T.intercept_, T.intercept_ + T.coef_[0] * tcoord.size]
-        return tsdata, tcoord, trend, crange
+        return tsdata, tcoord, trend, title, crange
 
     def update_metrics_plot( self, bounds: Bbox = None ):
         axis = self.metrics_plot
         color = "blue"
-        values, tcoord, trend, crange = self.compute_analytics( bounds )
+        values, tcoord, trend, title, crange = self.compute_analytics( bounds )
+        axis.title.set_text( title )
         t = tcoord.values
         mplot = self.metrics_plots.get( color, None )
         if mplot is None:
@@ -388,9 +405,8 @@ class SliceAnimation:
         else:
             mplot.set_data( t, values )
             self.trend_line.set_data( [t[0],t[-1]], trend )
-            axis.relim()
-#                axis.autoscale( enable=True, axis='y', tight=True)
-            axis.autoscale_view( tight=True, scalex=False, scaley=True )
+            axis.set_ylim( values.min(), values.max() )
+            axis.set_yticks( np.linspace( values.min(), values.max(), 7 ) )
             plt.draw()
         return crange
 
@@ -417,8 +433,8 @@ class SliceAnimation:
             except Exception:   tval1 = tval
             self.images[iPlot].set_data( frame_image )
             stval = str(tval1).split("T")[0]
-            subplot.title.set_text( f"F-{self.currentFrame} [{stval}]" )
-        self.update_metrics( self.currentFrame )
+            subplot.title.set_text( f"{self.name} [{self.currentFrame}]: {stval}" )
+        self.update_metrics_marker(self.currentFrame)
 
     def onMouseRelease(self, event):
         pass
