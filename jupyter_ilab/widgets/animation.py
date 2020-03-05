@@ -3,6 +3,7 @@ import matplotlib.patches
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.lines import Line2D
 from matplotlib.axes import Axes
+from  matplotlib.transforms import Bbox
 from matplotlib.colors import LinearSegmentedColormap, Normalize, ListedColormap
 import matplotlib.pyplot as plt
 from matplotlib.dates import num2date
@@ -14,7 +15,7 @@ import matplotlib as mpl
 import pandas as pd
 import xarray as xa
 import numpy as np
-from typing import List, Union, Dict, Callable, Tuple
+from typing import List, Union, Dict, Callable, Tuple, Optional
 import time, math, atexit, json
 from enum import Enum
 
@@ -220,6 +221,7 @@ class SliceAnimation:
         self.metrics: Dict = dict( blue="ts" ) # kwargs.get("metrics", {})
         self.frame_marker: Line2D = None
         self.setup_plots(**kwargs)
+        self.dataLims = {}
         self.z_axis = kwargs.pop('z', 0)
         self.z_axis_name = self.data[0].dims[ self.z_axis ]
         self.x_axis = kwargs.pop( 'x', 2 )
@@ -328,6 +330,9 @@ class SliceAnimation:
         z: xa.DataArray =  data[ 0, :, : ]   # .transpose()
         color_tick_labels = cm.pop( 'tick_labels', None )
         image: AxesImage = z.plot.imshow( ax=subplot, **cm )
+        self._cidpress = image.figure.canvas.mpl_connect('button_press_event', self.onMouseClick)
+        self._cidrelease = image.figure.canvas.mpl_connect('button_release_event', self.onMouseRelease )
+        subplot.callbacks.connect('ylim_changed', self.on_lims_change)
         if color_tick_labels is not None: image.colorbar.ax.set_xticklabels( color_tick_labels )
         subplot.title.set_text( data.name )
         overlays = kwargs.get( "overlays", {} )
@@ -335,43 +340,65 @@ class SliceAnimation:
             overlay.plot( ax=subplot, color=color, linewidth=2 )
         return image
 
-    def compute_analytics( self, op: str, x: np.array =None, y: np.array =None ) -> Tuple[ xa.DataArray, xa.DataArray, List ]:
+    def on_lims_change(self, ax ):
+        for iPlot in range(len(self.plot_axes)):
+             if ax == self.plot_axes[iPlot]:
+                 (x0, x1) = ax.get_xlim()
+                 (y0, y1) = ax.get_ylim()
+                 print(f"ZOOM Event: Updated bounds: ({x0},{x1}), ({y0},{y1})")
+                 crange = self.update_metrics_plot( Bbox.from_bounds( x0, y0, x1-x0, y1-y0 ) )
+                 self.images[iPlot].set_clim( crange )
+
+    def compute_analytics( self, bounds: Bbox = None ) -> Tuple[ xa.DataArray, xa.DataArray, List, Optional[List] ]:
         data_array: xa.DataArray = self.data[self.currentPlot]
         tcoord, ycoord, xcoord = data_array.coords[data_array.dims[0]], data_array.coords[data_array.dims[1]], data_array.coords[data_array.dims[2]]
-        if x is None: x = xcoord[xcoord.size//2].values
-        if y is None: y = ycoord[ycoord.size//2].values
-        selected_point_args = { data_array.dims[1]: y, data_array.dims[2]: x}
-        print( f"METRICS: {selected_point_args}")
-        tsdata =  data_array.sel( **selected_point_args, method='nearest' )
-        tvar = np.array(list(range(tcoord.size))).reshape([tcoord.size, 1])
+        x0 = xcoord[xcoord.size//2].values if bounds is None else bounds.x0
+        y0 = ycoord[ycoord.size//2].values if bounds is None else bounds.y0
+        crange = None
+
+        if bounds is None or bounds.width == 0 or bounds.height == 0:
+            selected_point_args = { data_array.dims[1]: y0, data_array.dims[2]: x0 }
+            print( f"METRICS: {selected_point_args}")
+            tsdata =  data_array.sel( **selected_point_args, method='nearest' )
+
+        else:
+            bounds = { data_array.dims[2]: slice(x0,bounds.x1), data_array.dims[1]: slice(y0,bounds.y1) }
+            subset = data_array.sel( **bounds )
+            tsdata = subset.mean( dim=data_array.dims[1:] )
+            visible_subset = subset[self.currentFrame,:,:]
+            crange = [ visible_subset.min(), visible_subset.max() ]
+
         regressor = LinearRegression()
+        tvar = np.array(list(range(tcoord.size))).reshape([tcoord.size, 1])
         T = regressor.fit( tvar, tsdata.values )
         trend = [T.intercept_, T.intercept_ + T.coef_[0] * tcoord.size]
-        return tsdata, tcoord, trend
+        return tsdata, tcoord, trend, crange
 
-    def update_metrics_plot( self, xp: np.array =None, yp: np.array =None ):
+    def update_metrics_plot( self, bounds: Bbox = None ):
         axis = self.metrics_plot
-        for color, op in self.metrics.items():
-            values, tcoord, trend = self.compute_analytics( op, xp, yp )
-            t = tcoord.values
-            mplot = self.metrics_plots.get( color, None )
-            if mplot is None:
-                line, = axis.plot( t, values, color=color, alpha=self.metrics_alpha )
-                line.set_label(values.name)
-                self.metrics_plots[ color ] = line
-                self.trend_line, = axis.plot( [t[0],t[-1]], trend, color="red" )
-            else:
-                mplot.set_data( t, values )
-                self.trend_line.set_data( [t[0],t[-1]], trend )
-                axis.relim()
+        color = "blue"
+        values, tcoord, trend, crange = self.compute_analytics( bounds )
+        t = tcoord.values
+        mplot = self.metrics_plots.get( color, None )
+        if mplot is None:
+            line, = axis.plot( t, values, color=color, alpha=self.metrics_alpha )
+            line.set_label(values.name)
+            self.metrics_plots[ color ] = line
+            self.trend_line, = axis.plot( [t[0],t[-1]], trend, color="red" )
+        else:
+            mplot.set_data( t, values )
+            self.trend_line.set_data( [t[0],t[-1]], trend )
+            axis.relim()
 #                axis.autoscale( enable=True, axis='y', tight=True)
-                axis.autoscale_view( tight=True, scalex=False, scaley=True )
-                plt.draw()
+            axis.autoscale_view( tight=True, scalex=False, scaley=True )
+            plt.draw()
+        return crange
 
     def create_metrics_plot(self):
         axis = self.metrics_plot
         axis.title.set_text("Metrics")
-        if self.metrics_scale is not None: axis.set_yscale( self.metrics_scale )
+        if self.metrics_scale is not None:
+            axis.set_yscale( self.metrics_scale )
         markers = self.metrics.pop('markers',{})
         self.update_metrics_plot()
         for color, value in markers.items():
@@ -393,6 +420,13 @@ class SliceAnimation:
             subplot.title.set_text( f"F-{self.currentFrame} [{stval}]" )
         self.update_metrics( self.currentFrame )
 
+    def onMouseRelease(self, event):
+        pass
+        # for iPlot in range(len(self.plot_axes)):
+        #     if event.inaxes == self.plot_axes[iPlot]:
+        #         dlims_changed = self.datalims_changed( iPlot )
+        #         print( f"dlims_changed[{iPlot}]: {dlims_changed}")
+
     def onMouseClick(self, event):
         if event.xdata != None and event.ydata != None:
             axis: Axes = self.metrics_plot
@@ -407,13 +441,18 @@ class SliceAnimation:
                 if event.inaxes ==  self.plot_axes[iPlot]:
                     self.currentPlot = iPlot
                     print(f"onImageClick: {event.xdata} {event.ydata}")
-                    self.update_metrics_plot( np.array(event.xdata), np.array(event.ydata) )
+                    self.update_metrics_plot( Bbox.from_bounds( event.xdata, event.ydata, 0, 0 ) )
+                    self.dataLims[iPlot] = event.inaxes.dataLim
+
+    def datalims_changed(self, iPlot: int ) -> bool:
+        previous_datalims: Bbox = self.dataLims[iPlot]
+        new_datalims: Bbox = self.plot_axes[iPlot].dataLim
+        return previous_datalims.bounds != new_datalims.bounds
 
     def add_plots(self, **kwargs ):
         for iPlot in range(self.nPlots):
             self.images[iPlot] = self.create_image( iPlot, **kwargs )
         self.create_metrics_plot()
-        self._cid = self.figure.canvas.mpl_connect( 'button_press_event', self.onMouseClick)
 
     def add_slider(self,  **kwargs ):
         self.slider = PageSlider( self.slider_axes, self.nFrames )
