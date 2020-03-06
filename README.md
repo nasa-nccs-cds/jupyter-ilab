@@ -3,7 +3,7 @@ Jupyterlab Tools and Wdigets developed for the NASA-NCCS Innovation Lab
 
 ###Installation
 These instructions assume that jupyterlab has already been installed.  
-*jupyterlab_env* is a conda environment that you use in jupyterlab.
+*jupyterlab_env* is a conda environment that is used in jupyterlab.
 
 * Add jupyterlab extensions (if not already present):
 ```
@@ -15,7 +15,7 @@ These instructions assume that jupyterlab has already been installed.
 
 ```
 >> conda activate jupyterlab_env
-(jupyterlab_env)>> conda install -c conda-forge xarray dask matplotlib numpy pandas ipympl nodejs
+(jupyterlab_env)>> conda install -c conda-forge xarray dask matplotlib numpy pandas scikit-learn netCDF4 ipympl nodejs
 ```    
 
 * Install jupyter-ilab

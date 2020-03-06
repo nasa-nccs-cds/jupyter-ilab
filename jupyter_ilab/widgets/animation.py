@@ -495,4 +495,5 @@ if __name__ == '__main__':
 
     data_array: xa.DataArray = CIP.data_array( "merra2", "tas" )
     animator = SliceAnimation( data_array )
+    print( "Showing animator")
     animator.show()
