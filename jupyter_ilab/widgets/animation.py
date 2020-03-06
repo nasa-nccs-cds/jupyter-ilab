@@ -455,7 +455,7 @@ class SliceAnimation:
                 taxis = data_array.coords[data_array.dims[0]].values
                 dtime = np.datetime64( num2date( event.xdata ) )
                 idx = np.searchsorted( taxis, dtime, side="left")
-                print( f"onMetricsClick: {event.xdata} -> {dtime} -> {idx}" )
+                print( f"onMetricsClick: {event.xdata} -> {dtime} --> {idx}" )
                 self.slider.set_val( idx )
             for iPlot in range( len(self.plot_axes) ):
                 if event.inaxes ==  self.plot_axes[iPlot]:
