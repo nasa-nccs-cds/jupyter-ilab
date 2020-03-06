@@ -2,3 +2,5 @@ xarray
 matplotlib
 numpy
 pandas
+ipympl
+nodejs
