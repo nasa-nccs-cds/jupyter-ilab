@@ -1,7 +1,7 @@
 # jupyter-ilab
-Jupyterlab Tools and Wdigets developed for the NASA-NCCS Innovation Lab
+Jupyterlab Tools and Widgets developed for the NASA-NCCS Innovation Lab
 
-###Installation
+### Installation
 These instructions assume that jupyterlab has already been installed.  
 *jupyterlab_env* is a conda environment that is used in jupyterlab.
 
