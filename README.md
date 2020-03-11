@@ -51,4 +51,4 @@ The animation widget features the following interaction modes:
     6. Select zoom mode from the toolbar and drag-select a region to zoom to that region.  The graph displays an average over that region.
     7. Select pan mode from the toolbar and drag a selected region to move to that region.  The graph displays an average over the new region.
     8. Hover the mouse over any point on a graph or image to display the coordinates and value at that point.
-    9. Click and drag the small rectangle at the lower left of the figure to resize the figure.
+    9. Click and drag the small grey rectangle at the lower right of the figure to resize the figure.
