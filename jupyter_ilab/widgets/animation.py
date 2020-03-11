@@ -1,13 +1,13 @@
 import matplotlib.widgets
 import matplotlib.patches
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.gridspec import GridSpec, SubplotSpec
 from matplotlib.lines import Line2D
 from matplotlib.axes import Axes
 from  matplotlib.transforms import Bbox
 from matplotlib.colors import LinearSegmentedColormap, Normalize, ListedColormap
 import matplotlib.pyplot as plt
 from matplotlib.dates import num2date
-from matplotlib.gridspec import SubplotSpec
 from sklearn.linear_model import LinearRegression
 from threading import  Thread
 from matplotlib.figure import Figure
@@ -221,7 +221,7 @@ class SliceAnimation:
         self.metrics_alpha = kwargs.get( "metrics_alpha", 0.7 )
         self.metrics_plots = {}
         self.figure: Figure = plt.figure()
-        self.plot_grid = self.figure.add_gridspec( 3, 2 )
+        self.plot_grid: GridSpec = self.figure.add_gridspec( 3, 2 )
         self.images: Dict[int,AxesImage] = {}
         self.nPlots = min( len(self.data), 4 )
         self.metrics: Dict = dict( blue="ts" ) # kwargs.get("metrics", {})
@@ -275,7 +275,7 @@ class SliceAnimation:
         return result
 
     def setup_plots( self, **kwargs ):
-        self.plot_grid = self.figure.add_gridspec(3,2)
+        self.plot_grid.update( bottom = 0.05 )
         if   self.nPlots == 1:  gsl = [ self.plot_grid[:-1, :] ]
         elif self.nPlots == 2:  gsl = [ self.plot_grid[:-1, 0], self.plot_grid[:-1, 1]  ]
         elif self.nPlots == 3:  gsl = [ self.plot_grid[0, 0], self.plot_grid[:-1, 1], self.plot_grid[0, 1], self.plot_grid[1, 0] ]
@@ -284,7 +284,7 @@ class SliceAnimation:
         self.metrics_plot = self.figure.add_subplot( self.plot_grid[2, :] )
         self.addSubplots( gsl )
         self.figure.tight_layout()
-        self.slider_axes: Axes = self.figure.add_axes([0.1, 0.0, 0.8, 0.04])  # [left, bottom, width, height]
+        self.slider_axes: Axes = self.figure.add_axes([0.1, 0.01, 0.8, 0.04])  # [left, bottom, width, height]
 
     def addSubplots(self, gsl: List[SubplotSpec]):
         subplots = []
