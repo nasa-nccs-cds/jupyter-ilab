@@ -208,6 +208,7 @@ class PageSlider(matplotlib.widgets.Slider):
 class SliceAnimation:
 
     def __init__(self, data_arrays: Union[xa.DataArray,List[xa.DataArray]], **kwargs ):
+        self._debug = True
         self.frames: np.ndarray = None
         self.plot_grid = None
         self.metrics_scale =  kwargs.get( 'metrics_scale', None )
@@ -275,7 +276,6 @@ class SliceAnimation:
         return result
 
     def setup_plots( self, **kwargs ):
-        self.plot_grid.update( bottom = 0.05 )
         if   self.nPlots == 1:  gsl = [ self.plot_grid[:-1, :] ]
         elif self.nPlots == 2:  gsl = [ self.plot_grid[:-1, 0], self.plot_grid[:-1, 1]  ]
         elif self.nPlots == 3:  gsl = [ self.plot_grid[0, 0], self.plot_grid[:-1, 1], self.plot_grid[0, 1], self.plot_grid[1, 0] ]
@@ -283,8 +283,8 @@ class SliceAnimation:
         else: raise Exception( f"Unsupported number of plots: {self.nPlots}" )
         self.metrics_plot = self.figure.add_subplot( self.plot_grid[2, :] )
         self.addSubplots( gsl )
-        self.figure.tight_layout()
         self.slider_axes: Axes = self.figure.add_axes([0.1, 0.01, 0.8, 0.04])  # [left, bottom, width, height]
+        self.plot_grid.update( left = 0.05, bottom = 0.1, top = 0.95, right = 0.95 )
 
     def addSubplots(self, gsl: List[SubplotSpec]):
         subplots = []
@@ -387,8 +387,11 @@ class SliceAnimation:
         crange = None
 
         if bounds is None or np.allclose( self.global_bounds.extents, bounds.extents, 0.0, 0.01 ):
-            if self.global_mean   is None: self.global_mean   = data_array.mean( dim=data_array.dims[1:] )
-            if self.global_bounds is None: self.global_bounds = axes.dataLim
+            if self.global_mean   is None:
+                global_data = data_array[:,0:5,0:5] if self._debug else data_array
+                self.global_mean   = global_data.mean( dim=data_array.dims[1:] )
+            if self.global_bounds is None:
+                self.global_bounds = axes.dataLim
             if self.global_crange is None:
                 image0 = data_array[0,:,:]
                 self.global_crange = [ image0.min(), image0.max()]
