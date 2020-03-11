@@ -208,7 +208,7 @@ class PageSlider(matplotlib.widgets.Slider):
 class SliceAnimation:
 
     def __init__(self, data_arrays: Union[xa.DataArray,List[xa.DataArray]], **kwargs ):
-        self._debug = True
+        self._debug = False
         self.frames: np.ndarray = None
         self.plot_grid = None
         self.metrics_scale =  kwargs.get( 'metrics_scale', None )
