@@ -284,7 +284,7 @@ class SliceAnimation:
         self.metrics_plot = self.figure.add_subplot( self.plot_grid[2, :] )
         self.addSubplots( gsl )
         self.figure.tight_layout()
-        self.slider_axes: Axes = self.figure.add_axes([0.1, 0.01, 0.8, 0.04])  # [left, bottom, width, height]
+        self.slider_axes: Axes = self.figure.add_axes([0.1, 0.0, 0.8, 0.04])  # [left, bottom, width, height]
 
     def addSubplots(self, gsl: List[SubplotSpec]):
         subplots = []
@@ -296,10 +296,10 @@ class SliceAnimation:
 
     def same_axes(self, array0: xa.DataArray, array1: xa.DataArray ) -> bool:
         same_shape =  array0.shape[1:] == array1.shape[1:]
-        # x0, x1, y0, y1 = array0.coords[array0.dims[1]].values, array1.coords[array1.dims[1]].values, array0.coords[array0.dims[2]].values, array1.coords[array1.dims[2]].values
-        # sa =  same_shape and (x0[0]==x1[0]) and (x0[-1]==x1[-1]) and (y0[0]==y1[0]) and (y0[-1]==y1[-1])
-        # print( f" sa = {sa} ")
-        return same_shape
+        x0, x1, y0, y1 = array0.coords[array0.dims[1]].values, array1.coords[array1.dims[1]].values, array0.coords[array0.dims[2]].values, array1.coords[array1.dims[2]].values
+        tolx, toly = x0[1]-x0[0], y0[1]-y0[0]
+        equiv_axes = np.allclose( x0, x1, atol=tolx ) and np.allclose( y0, y1, atol=toly )
+        return same_shape and equiv_axes
 
     def invert_yaxis(self):
         self.plot_axes[0].invert_yaxis()
@@ -513,7 +513,6 @@ class SliceAnimation:
 if __name__ == '__main__':
     from jupyter_ilab.util.cip import CIP
     vars = [ "tas", "huss" ]
-
     data_arrays: List[xa.DataArray] = [ CIP.data_array( "merra2", var ) for var in vars ]
     animator = SliceAnimation( data_arrays )
     print( "Showing animator")

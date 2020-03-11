@@ -7,6 +7,7 @@ from  matplotlib.transforms import Bbox
 from matplotlib.colors import LinearSegmentedColormap, Normalize, ListedColormap
 import matplotlib.pyplot as plt
 from matplotlib.dates import num2date
+from matplotlib.gridspec import SubplotSpec
 from sklearn.linear_model import LinearRegression
 from threading import  Thread
 from matplotlib.figure import Figure
@@ -212,10 +213,10 @@ class SliceAnimation:
         self.metrics_scale =  kwargs.get( 'metrics_scale', None )
         self.data: List[xa.DataArray] = self.preprocess_inputs(data_arrays)
         self.global_mean = None
+        self.plot_titles = None
         self.global_bounds: Bbox = None
         self.global_crange = None
         self.metrics_range = None
-        self.name = self.get_name( self.data[0] )
         self.plot_axes = None
         self.metrics_alpha = kwargs.get( "metrics_alpha", 0.7 )
         self.metrics_plots = {}
@@ -275,15 +276,30 @@ class SliceAnimation:
 
     def setup_plots( self, **kwargs ):
         self.plot_grid = self.figure.add_gridspec(3,2)
-        if self.nPlots == 1:    gsl = [ self.plot_grid[:-1, :] ]
+        if   self.nPlots == 1:  gsl = [ self.plot_grid[:-1, :] ]
         elif self.nPlots == 2:  gsl = [ self.plot_grid[:-1, 0], self.plot_grid[:-1, 1]  ]
         elif self.nPlots == 3:  gsl = [ self.plot_grid[0, 0], self.plot_grid[:-1, 1], self.plot_grid[0, 1], self.plot_grid[1, 0] ]
         elif self.nPlots == 4:  gsl = [ self.plot_grid[0, 0], self.plot_grid[:-1, 1], self.plot_grid[0, 1], self.plot_grid[1, 0], self.plot_grid[1, 1] ]
         else: raise Exception( f"Unsupported number of plots: {self.nPlots}" )
         self.metrics_plot = self.figure.add_subplot( self.plot_grid[2, :] )
-        self.plot_axes = np.array( [ self.figure.add_subplot(gs) for gs in gsl ] )
+        self.addSubplots( gsl )
         self.figure.tight_layout()
         self.slider_axes: Axes = self.figure.add_axes([0.1, 0.01, 0.8, 0.04])  # [left, bottom, width, height]
+
+    def addSubplots(self, gsl: List[SubplotSpec]):
+        subplots = []
+        for iP, gs in enumerate(gsl):
+            args = dict( sharex=subplots[0], sharey=subplots[0] ) if (iP > 0) and self.same_axes(self.data[0],self.data[iP]) else {}
+            subplots.append( self.figure.add_subplot( gs, **args ) )
+        self.plot_axes = np.array( subplots )
+        self.plot_titles = [ self.get_name(self.data[iPlot]) for iPlot in range(self.nPlots) ]
+
+    def same_axes(self, array0: xa.DataArray, array1: xa.DataArray ) -> bool:
+        same_shape =  array0.shape[1:] == array1.shape[1:]
+        x0, x1, y0, y1 = array0.coords[array0.dims[1]].values, array1.coords[array1.dims[1]].values, array0.coords[array0.dims[2]].values, array1.coords[array1.dims[2]].values
+        tolx, toly = x0[1]-x0[0], y0[1]-y0[0]
+        equiv_axes = np.allclose( x0, x1, atol=tolx ) and np.allclose( y0, y1, atol=toly )
+        return same_shape and equiv_axes
 
     def invert_yaxis(self):
         self.plot_axes[0].invert_yaxis()
@@ -341,7 +357,7 @@ class SliceAnimation:
         self._cidrelease = image.figure.canvas.mpl_connect('button_release_event', self.onMouseRelease )
         subplot.callbacks.connect('ylim_changed', self.on_lims_change)
         if color_tick_labels is not None: image.colorbar.ax.set_xticklabels( color_tick_labels )
-        subplot.title.set_text( data.name )
+#        subplot.title.set_text( data.name )
         overlays = kwargs.get( "overlays", {} )
         for color, overlay in overlays.items():
             overlay.plot( ax=subplot, color=color, linewidth=2 )
@@ -350,9 +366,10 @@ class SliceAnimation:
     def on_lims_change(self, ax ):
         for iPlot in range(len(self.plot_axes)):
              if ax == self.plot_axes[iPlot]:
+                 self.currentPlot = iPlot
                  (x0, x1) = ax.get_xlim()
                  (y0, y1) = ax.get_ylim()
-                 print(f"ZOOM Event: Updated bounds: ({x0},{x1}), ({y0},{y1})")
+                 print(f"ZOOM Event[{iPlot}]: Updated bounds: ({x0},{x1}), ({y0},{y1})")
                  crange = self.update_metrics_plot( Bbox.from_bounds( x0, y0, x1-x0, y1-y0 ) )
                  if crange:
                     self.images[iPlot].set_clim( crange )
@@ -411,11 +428,13 @@ class SliceAnimation:
             self.trend_line, = axis.plot( [t[0],t[-1]], trend, color="red" )
         else:
             mplot.set_data( t, values )
+            mplot.set_label(values.name)
             self.trend_line.set_data( [t[0],t[-1]], trend )
             self.metrics_range = [ values.min(), values.max() ]
             axis.set_ylim( *self.metrics_range )
             axis.set_yticks( np.linspace( *self.metrics_range, 7 ) )
-            plt.draw()
+            axis.legend()
+            self.figure.canvas.draw()
         return crange
 
     def create_metrics_plot(self):
@@ -441,28 +460,29 @@ class SliceAnimation:
             except Exception:   tval1 = tval
             self.images[iPlot].set_data( frame_image )
             stval = str(tval1).split("T")[0]
-            subplot.title.set_text( f"{self.name} [{self.currentFrame}]: {stval}" )
+
+            subplot.title.set_text(f"{self.plot_titles[iPlot]} [{self.currentFrame}]: {stval}")
         self.update_metrics_marker()
 
     def onMouseRelease(self, event):
         pass
 
     def onMouseClick(self, event):
-        if event.xdata != None and event.ydata != None and not self.toolbarMode:
-            axis: Axes = self.metrics_plot
-            if event.inaxes == axis:
+        if event.xdata != None and event.ydata != None:
+            if event.inaxes == self.metrics_plot:
                 data_array: xa.DataArray = self.data[self.currentPlot]
                 taxis = data_array.coords[data_array.dims[0]].values
                 dtime = np.datetime64( num2date( event.xdata ) )
                 idx = np.searchsorted( taxis, dtime, side="left")
-                print( f"onMetricsClick: {event.xdata} -> {dtime} -> {idx}" )
+                print( f"onMetricsClick: {event.xdata} -> {dtime} --> {idx}" )
                 self.slider.set_val( idx )
-            for iPlot in range( len(self.plot_axes) ):
-                if event.inaxes ==  self.plot_axes[iPlot]:
-                    self.currentPlot = iPlot
-                    print(f"onImageClick: {event.xdata} {event.ydata}")
-                    self.update_metrics_plot( Bbox.from_bounds( event.xdata, event.ydata, 0, 0 ) )
-                    self.dataLims[iPlot] = event.inaxes.dataLim
+            elif not self.toolbarMode:
+                for iPlot in range( len(self.plot_axes) ):
+                    if event.inaxes ==  self.plot_axes[iPlot]:
+                        self.currentPlot = iPlot
+                        print(f"onImageClick: {event.xdata} {event.ydata}")
+                        self.update_metrics_plot( Bbox.from_bounds( event.xdata, event.ydata, 0, 0 ) )
+                        self.dataLims[iPlot] = event.inaxes.dataLim
 
     def datalims_changed(self, iPlot: int ) -> bool:
         previous_datalims: Bbox = self.dataLims[iPlot]
@@ -492,7 +512,8 @@ class SliceAnimation:
 
 if __name__ == '__main__':
     from jupyter_ilab.util.cip import CIP
-
-    data_array: xa.DataArray = CIP.data_array( "merra2", "tas" )
-    animator = SliceAnimation( data_array )
+    vars = [ "tas", "huss" ]
+    data_arrays: List[xa.DataArray] = [ CIP.data_array( "merra2", var ) for var in vars ]
+    animator = SliceAnimation( data_arrays )
+    print( "Showing animator")
     animator.show()

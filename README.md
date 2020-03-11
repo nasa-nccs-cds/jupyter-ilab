@@ -33,3 +33,21 @@ These instructions assume that jupyterlab has already been installed.
     (jupyterlab_env)>> jupyter lab
 ```
 * **Run the LabDemo.ipynb demo notebook**
+
+This animation widget, shown in the screenshot below, displays two image timeseries.  The widget can display 1-4 timeseries.  
+Each timeseries is expected to have 3 coordinate dimensions, in the order (t,y,x).
+
+![](./docs/animator_screenshot-1.png)
+
+* **Interactivity** 
+
+The animation widget features the following interaction modes:
+
+    1. Click on the buttons on the left of the slider to animate forward or backward.
+    2. Click on the buttons on the right of the slider to step forward or backward.
+    3. Click on the body of the slider to jump to a particular animation frame.
+    4. Click on the graph to jump the animation to that point.
+    5. Click on an image to display a graph of the values at that point.
+    6. Select zoom mode from the toolbar and drag-select a region to zoom to that region.  The graph displays an average over that region.
+    7. Select pan mode from the toolbar and drag a selected region to move to that region.  The graph displays an average over the new region.
+    8. Hover the mouse over any point on a graph or image to display the coordinates and value at that point.
