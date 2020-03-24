@@ -9,6 +9,6 @@ vars = [ "tas", "huss" ]
 data_arrays: List[xa.DataArray] = [ CIP.data_array( "merra2", var ) for var in vars ]
 
 animator = SliceAnimation( data_arrays )
-animator.start()
+animator.show()
 
 
